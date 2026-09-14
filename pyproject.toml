@@ -23,6 +23,9 @@ cuda = ["nvidia-cublas-cu12", "nvidia-cudnn-cu12==9.*"]
 # back to faster-whisper on any failure). install.sh adds this extra
 # automatically on macOS arm64.
 mlx = ["mlx-whisper; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+# Not installed by install.sh/install.ps1 - only needed to run the test
+# suite (pytest -q). Install with: pip install -e ".[dev]"
+dev = ["pytest>=7.0.0"]
 all = [
     "dropbox>=11.36.0",
     "faster-whisper>=1.0.0",
