@@ -5,11 +5,7 @@
 # this caused a real "ffmpeg not found in PATH" failure in production.
 export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"
 
-# Lock path includes a hash of "$@" so different jobs (e.g. one per
-# monitored folder) get independent locks and can run concurrently,
-# while two invocations with the SAME arguments still serialize.
-argsHash=$(printf '%s' "$*" | md5 -q 2>/dev/null || printf '%s' "$*" | md5sum | cut -d' ' -f1)
-lockPath="/Users/fcastell/voxelfc/.update-${argsHash}.lock"
+lockPath="/Users/fcastell/voxelfc/.update.lock"
 
 createLock() {
     (set -C; umask 077; echo "$$" > "$lockPath") 2>/dev/null
