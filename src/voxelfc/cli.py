@@ -28,7 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
         "line (blank lines and lines starting with '#' are ignored). Each line "
         "starting with '/' is treated as a Dropbox folder; any other line is a "
         "local folder. Every source is processed independently, in its own "
-        "environment - --local is ignored in this mode. Mutually exclusive "
+        "environment - --dropbox is ignored in this mode. Mutually exclusive "
         "with --source.",
     )
     parser.add_argument(
@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--archive",
         default=None,
         help="If processing finishes OK, move (not copy) the original audio and the "
-        "generated outputs into this folder (local or Dropbox, per --local). With "
+        "generated outputs into this folder (local or Dropbox, per --dropbox). With "
         "--source-list, this is a base name reused per source: each source's "
         "outputs move into <archive>/<source folder name>, in that source's own "
         "environment (local source archives locally, Dropbox source archives on "
@@ -48,9 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
         "value.",
     )
     parser.add_argument(
-        "--local",
+        "--dropbox",
         action="store_true",
-        help="Treat --source/--dest as local paths instead of Dropbox paths.",
+        help="Treat --source/--dest as Dropbox paths instead of local paths "
+        "(local is the default).",
     )
     parser.add_argument(
         "--recursive",
@@ -139,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.recursive,
                 get_dropbox_client,
             )
-        if args.local:
+        if not args.dropbox:
             dest_dir = Path(args.dest) if args.dest else None
             archive_dir = Path(args.archive) if args.archive else None
             source_path = Path(args.source)
@@ -161,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.source.startswith("/"):
                 logger.error(
                     "'--source %s' doesn't look like a Dropbox path (must start with '/'). "
-                    "If it's a local file, use --local.",
+                    "Remove --dropbox if it's a local file.",
                     args.source,
                 )
                 return 1

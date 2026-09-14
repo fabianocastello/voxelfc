@@ -5,7 +5,7 @@ REM bundled with Windows 10 1803+ / Windows 11), extracts it, and replaces
 REM the project files, preserving .venv and .env. Then runs voxelfc with
 REM the given arguments.
 REM
-REM Usage: scripts\update-nogit.bat --source C:\path\to\audio.mp3 --local --model-size large-v3
+REM Usage: scripts\update-nogit.bat --source C:\path\to\audio.mp3 --model-size large-v3
 setlocal
 
 set "REPO_DIR=%~dp0.."

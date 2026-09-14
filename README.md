@@ -87,23 +87,23 @@ source .venv/bin/activate          # Linux/macOS
 .venv\Scripts\Activate.ps1         # Windows, in PowerShell
 ```
 
-Process a local file (without touching Dropbox — useful for testing):
+Process a local file (this is the default — no flag needed):
 
 ```bash
-voxelfc --source /path/to/audio.mp3 --local
+voxelfc --source /path/to/audio.mp3
 ```
 
-Process a file from Dropbox (downloads, processes, and uploads back to the
-same source folder):
+Process a file from Dropbox instead (downloads, processes, and uploads back to
+the same source folder) with `--dropbox`:
 
 ```bash
-voxelfc --source /Recordings/meeting.mp3
+voxelfc --source /Recordings/meeting.mp3 --dropbox
 ```
 
 Specifying a different destination folder on Dropbox:
 
 ```bash
-voxelfc --source /Recordings/meeting.mp3 --dest /Recordings/Transcripts
+voxelfc --source /Recordings/meeting.mp3 --dropbox --dest /Recordings/Transcripts
 ```
 
 Other useful options: `--model-size`, `--device {auto,cpu,cuda}`,

@@ -115,16 +115,16 @@ source .venv/bin/activate
 .venv\Scripts\Activate.ps1
 ```
 
-Process a local file:
+Process a local file (the default, no flag needed):
 
 ```bash
-voxelfc --source /path/to/audio.mp3 --local
+voxelfc --source /path/to/audio.mp3
 ```
 
-Process a file on Dropbox:
+Process a file on Dropbox instead:
 
 ```bash
-voxelfc --source /Recordings/meeting.mp3
+voxelfc --source /Recordings/meeting.mp3 --dropbox
 ```
 
 Recommended initial test:
@@ -132,7 +132,6 @@ Recommended initial test:
 ```bash
 voxelfc \
   --source /path/to/short_audio.mp3 \
-  --local \
   --model-size small \
   --language pt
 ```

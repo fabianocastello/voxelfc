@@ -69,7 +69,7 @@ echo Installation complete on this machine.
 echo Models and cache will live in: %USERPROFILE%\.voxelfc\models
 echo To use it:
 echo   .venv\Scripts\activate.bat
-echo   voxelfc --source C:\path\to\audio.mp3 --local
+echo   voxelfc --source C:\path\to\audio.mp3
 pause
 exit /b 0
 
