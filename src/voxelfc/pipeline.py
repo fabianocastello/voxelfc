@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
+import json
 import logging
 import os
+import re
 import shutil
 import socket
 import time
@@ -161,6 +164,111 @@ def _find_existing_subtitle_dropbox(dropbox_client, source_path: str) -> tuple[s
         if dropbox_client.file_exists(candidate):
             return ext, candidate
     return None
+
+
+def _find_existing_old_transcript_local(source: Path) -> tuple[Path, Path | None] | None:
+    """Looks for a pre-existing '<stem>.transcription.txt' - an older,
+    separate pipeline's output: a single JSON object with a flat
+    "transcription" text field, no timestamps/segments/speakers - sitting
+    next to the source audio. Only checked as a fallback when there's no
+    .vtt/.srt (which has real timestamps and wins if present).
+    '<stem>.metadados.txt', if also present, is returned too for extra
+    (best-effort) audio metrics - never required."""
+    transcript_path = source.with_suffix(".transcription.txt")
+    if not transcript_path.exists():
+        return None
+    metadados_path = source.with_suffix(".metadados.txt")
+    return transcript_path, (metadados_path if metadados_path.exists() else None)
+
+
+def _find_existing_old_transcript_dropbox(
+    dropbox_client, source_path: str
+) -> tuple[str, str | None] | None:
+    """Dropbox equivalent of _find_existing_old_transcript_local."""
+    source_purepath = PurePosixPath(source_path)
+    stem_path = source_purepath.parent / source_purepath.stem
+    transcript_path = f"{stem_path}.transcription.txt"
+    if not dropbox_client.file_exists(transcript_path):
+        return None
+    metadados_path = f"{stem_path}.metadados.txt"
+    return transcript_path, (metadados_path if dropbox_client.file_exists(metadados_path) else None)
+
+
+_OLD_METADADOS_AUDIO_RE = re.compile(r"metaDadosAudioMP3:\s*(\{.*\})")
+_OLD_METADADOS_AUDIO_FALLBACK_RE = re.compile(r"metaDadosAudioOriginal:\s*(\{.*\})")
+
+
+def _parse_old_metadados(text: str) -> dict:
+    """Best-effort extraction of audio metrics from an older pipeline's
+    free-form metadados.txt dump - NOT JSON, a log-style text file with
+    embedded Python-dict-repr lines like "metaDadosAudioMP3: {...}".
+    Prefers metaDadosAudioMP3 (matches the actual .mp3 we have) over
+    metaDadosAudioOriginal (the pre-conversion source, e.g. a .wav).
+    Never raises: any field that can't be found or parsed is just
+    omitted, since this free-form format could vary across old files."""
+    match = _OLD_METADADOS_AUDIO_RE.search(text) or _OLD_METADADOS_AUDIO_FALLBACK_RE.search(text)
+    if not match:
+        return {}
+    try:
+        audio_meta = ast.literal_eval(match.group(1))
+    except (ValueError, SyntaxError):
+        return {}
+    if not isinstance(audio_meta, dict):
+        return {}
+
+    result = {}
+    if "durationSec" in audio_meta:
+        try:
+            result["audio_duration"] = format_duration(float(audio_meta["durationSec"]))
+        except (TypeError, ValueError):
+            pass
+    # Written as quoted strings, not bare YAML numbers: Obsidian's
+    # Properties panel locale-reformats bare numeric front-matter values
+    # (see the language_probability fix) - quoting sidesteps that.
+    for meta_key, front_matter_key in (
+        ("sampleRateHz", "sample_rate_hz"),
+        ("channels", "channels"),
+        ("bitrateKbps", "bitrate_kbps"),
+    ):
+        if meta_key in audio_meta:
+            result[front_matter_key] = str(audio_meta[meta_key])
+    return result
+
+
+def _build_outputs_from_old_transcript(
+    config: Config,
+    transcript_json_text: str,
+    metadados_text: str | None,
+    transcript_name: str,
+    audio_name: str,
+    output_stem: str,
+    output_dir: Path,
+) -> list[Path]:
+    """Builds outputs directly from an older pipeline's
+    '<stem>.transcription.txt' instead of running conversion/
+    transcription/diarization. Raises ValueError/KeyError if the JSON
+    doesn't have the expected shape - callers should catch that and fall
+    back to normal processing rather than treat it as fatal."""
+    data = json.loads(transcript_json_text)
+    text = data["transcription"].strip()
+    metadata = {
+        "system": "VoxelFC 1.0",
+        "audio_file": audio_name,
+        "processed_date": datetime.now().strftime("%Y-%m-%d"),
+        "running_on": socket.gethostname(),
+        "remarks": f"Used pre-existent transcript in {transcript_name}",
+    }
+    if metadados_text:
+        metadata.update(_parse_old_metadados(metadados_text))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_paths: list[Path] = []
+    if config.write_txt:
+        output_paths.append(
+            write_plain_txt(
+                [(0.0, 0.0, text)], output_dir / f"{output_stem}{TRANSCRIPT_SUFFIX}", metadata=metadata
+            )
+        )
+    return output_paths
 
 
 def _build_outputs_from_existing_subtitle(
@@ -454,9 +562,36 @@ def run_local_job(
             work_dir / "output",
         )
     else:
-        output_paths = process_file(
-            config, input_path=source, output_stem=output_stem, work_dir=work_dir, source_ref=source_ref
-        )
+        existing_old_transcript = _find_existing_old_transcript_local(source)
+        output_paths = None
+        if existing_old_transcript is not None:
+            transcript_path, metadados_path = existing_old_transcript
+            try:
+                output_paths = _build_outputs_from_old_transcript(
+                    config,
+                    transcript_path.read_text(encoding="utf-8"),
+                    metadados_path.read_text(encoding="utf-8") if metadados_path else None,
+                    transcript_path.name,
+                    source.name,
+                    output_stem,
+                    work_dir / "output",
+                )
+                logger.info(
+                    "[%s] Found pre-existing transcript (%s); skipping conversion and transcription.",
+                    job_id,
+                    transcript_path.name,
+                )
+            except (ValueError, KeyError) as exc:
+                logger.warning(
+                    "[%s] Couldn't use pre-existing transcript %s (%s); transcribing normally.",
+                    job_id,
+                    transcript_path.name,
+                    exc,
+                )
+        if output_paths is None:
+            output_paths = process_file(
+                config, input_path=source, output_stem=output_stem, work_dir=work_dir, source_ref=source_ref
+            )
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     final_paths = []
@@ -571,25 +706,54 @@ def run_dropbox_job(
                 work_dir / "output",
             )
         else:
-            local_input = work_dir / Path(source_path).name
-            if not state.is_done("downloaded"):
+            existing_old_transcript = _find_existing_old_transcript_dropbox(dropbox_client, source_path)
+            output_paths = None
+            if existing_old_transcript is not None:
+                transcript_remote, metadados_remote = existing_old_transcript
                 try:
-                    dropbox_client.download_file(source_path, local_input)
-                except SourceNotFoundError:
-                    logger.warning(
-                        "[%s] %s no longer exists on Dropbox - another machine likely "
-                        "already processed/archived it, skipping.",
-                        job_id,
-                        source_path,
+                    output_paths = _build_outputs_from_old_transcript(
+                        config,
+                        dropbox_client.read_text_file(transcript_remote),
+                        dropbox_client.read_text_file(metadados_remote) if metadados_remote else None,
+                        PurePosixPath(transcript_remote).name,
+                        PurePosixPath(source_path).name,
+                        stem,
+                        work_dir / "output",
                     )
-                    return []
-                state.mark_done("downloaded")
-            else:
-                logger.info("[%s] Download already done, skipping.", job_id)
+                    logger.info(
+                        "[%s] Found pre-existing transcript (%s); skipping download/conversion/"
+                        "transcription.",
+                        job_id,
+                        transcript_remote,
+                    )
+                except (ValueError, KeyError) as exc:
+                    logger.warning(
+                        "[%s] Couldn't use pre-existing transcript %s (%s); transcribing normally.",
+                        job_id,
+                        transcript_remote,
+                        exc,
+                    )
 
-            output_paths = process_file(
-                config, input_path=local_input, output_stem=stem, work_dir=work_dir, source_ref=source_ref
-            )
+            if output_paths is None:
+                local_input = work_dir / Path(source_path).name
+                if not state.is_done("downloaded"):
+                    try:
+                        dropbox_client.download_file(source_path, local_input)
+                    except SourceNotFoundError:
+                        logger.warning(
+                            "[%s] %s no longer exists on Dropbox - another machine likely "
+                            "already processed/archived it, skipping.",
+                            job_id,
+                            source_path,
+                        )
+                        return []
+                    state.mark_done("downloaded")
+                else:
+                    logger.info("[%s] Download already done, skipping.", job_id)
+
+                output_paths = process_file(
+                    config, input_path=local_input, output_stem=stem, work_dir=work_dir, source_ref=source_ref
+                )
 
         if not state.is_done("uploaded"):
             uploaded = []
