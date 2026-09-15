@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from .audio import convert_to_wav, probe_duration_seconds
 from .config import AUDIO_EXTENSIONS, Config
 from .diarize import diarize_audio
+from .dropbox_client import SourceNotFoundError
 from .merge import assign_speakers
 from .naming import build_output_stem
 from .outputs import parse_subtitle_text, write_plain_txt, write_srt, write_txt, write_vtt
@@ -572,7 +573,16 @@ def run_dropbox_job(
         else:
             local_input = work_dir / Path(source_path).name
             if not state.is_done("downloaded"):
-                dropbox_client.download_file(source_path, local_input)
+                try:
+                    dropbox_client.download_file(source_path, local_input)
+                except SourceNotFoundError:
+                    logger.warning(
+                        "[%s] %s no longer exists on Dropbox - another machine likely "
+                        "already processed/archived it, skipping.",
+                        job_id,
+                        source_path,
+                    )
+                    return []
                 state.mark_done("downloaded")
             else:
                 logger.info("[%s] Download already done, skipping.", job_id)

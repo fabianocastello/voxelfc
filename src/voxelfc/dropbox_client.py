@@ -8,6 +8,14 @@ from .config import AUDIO_EXTENSIONS
 logger = logging.getLogger("voxelfc")
 
 
+class SourceNotFoundError(RuntimeError):
+    """Raised by download_file() when the source path no longer exists on
+    Dropbox - typically because another machine already claimed, processed,
+    and archived it between this run's folder listing and this file's turn
+    in the batch loop. Callers can catch this specifically to treat it as
+    an expected multi-machine race rather than a real failure."""
+
+
 class DropboxClient:
     """Thin wrapper around the official Dropbox SDK. Imported inside
     __init__ so this dependency isn't required just to import the module.
@@ -87,9 +95,19 @@ class DropboxClient:
         )
 
     def download_file(self, dropbox_path: str, local_path: Path) -> Path:
+        ApiError = self._dbx_module.exceptions.ApiError
         local_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Downloading from Dropbox: %s -> %s", dropbox_path, local_path)
-        self.dbx.files_download_to_file(str(local_path), dropbox_path)
+        try:
+            self.dbx.files_download_to_file(str(local_path), dropbox_path)
+        except ApiError as exc:
+            error = exc.error
+            if error.is_path() and error.get_path().is_not_found():
+                raise SourceNotFoundError(
+                    f"{dropbox_path} no longer exists on Dropbox (likely already "
+                    "processed/archived by another machine)"
+                ) from exc
+            raise
         return local_path
 
     def upload_file(self, local_path: Path, dropbox_path: str) -> str:
